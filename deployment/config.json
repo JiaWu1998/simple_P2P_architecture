@@ -1,0 +1,24 @@
+{
+    "server": 
+    {
+        "ip_address": "127.0.0.1",
+        "port": 1234,
+        "log_file": "server_log.txt",
+        "watch_folder_name": "watch_folder"
+    },
+    "client": 
+    {
+        "ip_address": "127.0.0.1",
+        "server_port": 1234,
+        "log_file": "client_log.txt",
+        "download_folder_name": "download_folder"
+    },
+    "thread_sockets": 
+    {
+        "num_thread_sockets": 10,
+        "ports": [1235,1236,1237,1238,1239,1240,1241,1242,1243,1244]
+    },
+    "header_length": 10,
+    "meta_length": 20,
+    "redownload_times": 5
+}
