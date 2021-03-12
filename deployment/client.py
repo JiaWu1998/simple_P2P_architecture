@@ -9,19 +9,19 @@ import hashlib
 import sys
 import hashlib
 import datetime
+from pathlib import Path
 
 # get configurations 
 config = json.load(open(f"{os.path.dirname(os.path.abspath(__file__))}/config.json"))
 
 IP = config['client']['ip_address']
-PORT = config['client']['server_port']
 HEADER_LENGTH = config['header_length']
 META_LENGTH = config['meta_length']
-NUM_THREAD_SOCKETS = config['thread_sockets']['num_thread_sockets']
-THREAD_PORTS = [PORT] + config['thread_sockets']['ports']
+THREAD_PORTS = config['client']['ports']
 LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['client']['log_file']}", "a")
 DOWNLOAD_FOLDER_NAME = config['client']['download_folder_name']
 REDOWNLOAD_TIME = config['redownload_times']
+CLIENT_ID = int(os.path.basename(Path(os.path.realpath(__file__)).parent).split('_')[1])
 
 # Logs messages
 def log_this(msg):
@@ -29,58 +29,14 @@ def log_this(msg):
     LOG.write(f"{datetime.datetime.now()} {msg}")
     LOG.flush()
 
-# Waiting for a list of directories from the server
-def wait_for_list(full_command):
-    # Encode command to bytes, prepare header and convert to bytes, like for username above, then send
-    full_command = full_command.encode('utf-8')
-    command_header = f"{len(full_command):<{HEADER_LENGTH}}".encode('utf-8')
-    meta = f"{'':<{META_LENGTH}}".encode('utf-8')
-    client_sockets[0].send(command_header + meta + full_command)
-
-    log_this(f"Client sent command: {full_command}")
-
-    # Keep trying to recieve until client recieved returns from the server
-    while True:
-        try:
-            # Receive our "header" containing username length, it's size is defined and constant
-            header = client_sockets[0].recv(HEADER_LENGTH)
-
-            # If we received no data, server gracefully closed a connection, for example using socket.close() or socket.shutdown(socket.SHUT_RDWR)
-            if not len(header):
-                log_this(f"Connection closed by the server")
-                return
-
-            # Convert header to int value
-            header = int(header.decode('utf-8').strip())
-
-            # Get meta data
-            meta = client_sockets[0].recv(META_LENGTH)
-            meta = meta.decode('utf-8').strip()
-
-            # Receive and decode msg
-            dir_list = client_sockets[0].recv(header).decode('utf-8')
-            dir_list = dir_list.split('\n')
-
-            # Print List
-            for d in dir_list:
-                print(d)
-
-            # Break out of the loop when list is recieved                
-            break
-
-        except IOError as e:
-
-            if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
-                log_this('Reading error: {}'.format(str(e)))
-                return
-
-            # We just did not receive anything
-            continue
-
-        except Exception as e:
-            # Any other exception - something happened, exit
-            log_this('Reading error: '.format(str(e)))
-            return
+# Verbose function
+def help():
+    print("\n*** INFO ON FUNCTIONS ***\n")
+    print("[function_name] [options] [parameters] - [description]\n")
+    print("get_files_list - gets the file names from all the clients\n")
+    print("download -p <file_name> ... <file_name> - downloads one or more files serially or parallely. To download serially, use it without the -p option\n")
+    print("help - prints verbose for functions\n")
+    print("quit - exits client interface\n")
 
 # waiting function for parallelized/serial file download
 def parallelize_wait_for_file_download(client_socket, files):
@@ -189,10 +145,10 @@ def wait_for_file_download(full_command, files):
     start = time.time()
 
     if parallelize:       
-        for i in range(0, len(files), NUM_THREAD_SOCKETS):
+        for i in range(0, len(files), len(THREAD_PORTS)):
             thread_idx = 0
             threads = []
-            for j in range(i,i+NUM_THREAD_SOCKETS):
+            for j in range(i,i+ len(THREAD_PORTS)):
                 if j < len(files):
                     t = Thread(target=parallelize_wait_for_file_download, args=(client_sockets[thread_idx], [files[j]],))
                     t.start()
@@ -215,19 +171,78 @@ def wait_for_file_download(full_command, files):
     results_file.write(f"{(end-start)*1000}\n")
 
 
+# send updated directory to server
+def update_server():
+    try:
+        list_of_dir = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
+        list_of_dir = '\n'.join(list_of_dir)
+        list_of_dir = f"update_list {list_of_dir}".encode('utf-8')
+        list_of_dir_header = f"{len(list_of_dir):<{HEADER_LENGTH}}".encode('utf-8')
+        meta = f"{f'{CLIENT_ID}':<{META_LENGTH}}".encode('utf-8')
+        client_sockets[0].send(list_of_dir_header + meta + list_of_dir)
 
-# Verbose function
-def help():
-    print("\n*** INFO ON FUNCTIONS ***\n")
-    print("[function_name] [options] [parameters] - [description]\n")
-    print("get_files_list - gets the file names from the watch directory of the server\n")
-    print("download -p <file_name> ... <file_name> - downloads one or more files serially or parallely. To download serially, use it without the -p option\n")
-    print("help - prints verbose for functions\n")
-    print("quit - exits client interface\n")
+    except:
+        # client closed connection, violently or by user
+        return False
+
+# Waiting for a list of directories from the server
+def wait_for_list(full_command):
+    # Encode command to bytes, prepare header and convert to bytes, like for username above, then send
+    full_command = full_command.encode('utf-8')
+    command_header = f"{len(full_command):<{HEADER_LENGTH}}".encode('utf-8')
+    meta = f"{'':<{META_LENGTH}}".encode('utf-8')
+    client_sockets[0].send(command_header + meta + full_command)
+
+    log_this(f"Client sent command: {full_command}")
+
+    # Keep trying to recieve until client recieved returns from the server
+    while True:
+        try:
+            # Receive our "header" containing username length, it's size is defined and constant
+            header = client_sockets[0].recv(HEADER_LENGTH)
+
+            # If we received no data, server gracefully closed a connection, for example using socket.close() or socket.shutdown(socket.SHUT_RDWR)
+            if not len(header):
+                log_this(f"Connection closed by the server")
+                return
+
+            # Convert header to int value
+            header = int(header.decode('utf-8').strip())
+
+            # Get meta data
+            meta = client_sockets[0].recv(META_LENGTH)
+            meta = meta.decode('utf-8').strip()
+
+            # Receive and decode msg
+            dir_list = client_sockets[0].recv(header).decode('utf-8')
+            dir_list = json.loads(dir_list)
+
+            # Print List
+            for client in dir_list:
+                print(f"Client {client}:")
+                for file in dir_list[client]:
+                    print(f"\t{file}")
+
+            # Break out of the loop when list is recieved                
+            break
+
+        except IOError as e:
+
+            if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+                log_this('Reading error: {}'.format(str(e)))
+                return
+
+            # We just did not receive anything
+            continue
+
+        except Exception as e:
+            # Any other exception - something happened, exit
+            log_this('Reading error: '.format(str(e)))
+            return
 
 if __name__ == "__main__":
     
-    if len(sys.argv) == 0:
+    if len(sys.argv) == 1:
         # Create list of sockets connection
         client_sockets = []
 
@@ -237,17 +252,19 @@ if __name__ == "__main__":
         username_header = f"{len(username):<{HEADER_LENGTH}}".encode('utf-8')
         meta = f"{'':<{META_LENGTH}}".encode('utf-8')
 
-        for i in range(len(THREAD_PORTS)):
-            temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            temp.connect((IP, THREAD_PORTS[i]))
-            temp.setblocking(False)
+        # Initialize conneciton with the server
+        temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        temp.connect((IP, THREAD_PORTS[CLIENT_ID]))
+        temp.setblocking(False)
+        temp.send(username_header + meta + username)
+        client_sockets.append(temp)
 
-            # Initialize conneciton with the server
-            temp.send(username_header + meta + username)
-            client_sockets.append(temp)
+        # Initialize file directory to server
+        update_server()
         
         # Print verbose client shell begins
         help()
+        
 
         # Does Client Things
         while True:
@@ -288,14 +305,15 @@ if __name__ == "__main__":
         username_header = f"{len(username):<{HEADER_LENGTH}}".encode('utf-8')
         meta = f"{'':<{META_LENGTH}}".encode('utf-8')
 
-        for i in range(len(THREAD_PORTS)):
-            temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            temp.connect((IP, THREAD_PORTS[i]))
-            temp.setblocking(False)
+        # Initialize conneciton with the server
+        temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        temp.connect((IP, THREAD_PORTS[CLIENT_ID]))
+        temp.setblocking(False)
+        temp.send(username_header + meta + username)
+        client_sockets.append(temp)
 
-            # Initialize conneciton with the server
-            temp.send(username_header + meta + username)
-            client_sockets.append(temp)
+        # Initialize file directory to server
+        update_server()
 
         # Does Client Things
         for i in sys.argv[1:]:

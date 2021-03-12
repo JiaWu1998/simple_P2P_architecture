@@ -11,13 +11,15 @@ import hashlib
 config = json.load(open(f"{os.path.dirname(os.path.abspath(__file__))}/config.json"))
 
 IP = config['server']['ip_address']
-PORT = config['server']['port']
 HEADER_LENGTH = config['header_length']
 META_LENGTH = config['meta_length']
-NUM_THREAD_SOCKETS = config['thread_sockets']['num_thread_sockets']
-THREAD_PORTS = [PORT] + config['thread_sockets']['ports']
-LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['server']['log_file']}", "a")
+THREAD_PORTS = config['server']['ports']
 WATCH_FOLDER_NAME = config['server']['watch_folder_name']
+CLIENT_FILES_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/{WATCH_FOLDER_NAME}/client_files.json"
+CLIENT_FILES = open(CLIENT_FILES_DIR, "a")
+JSON_CLIENT_FILES = json.loads(CLIENT_FILES) if os.stat(CLIENT_FILES_DIR).st_size != 0 else json.loads(json.dumps({}))
+LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['server']['log_file']}", "a")
+
 
 # Logs messages
 def log_this(msg):
@@ -45,7 +47,7 @@ def receive_command(client_socket):
         command_length = int(command_header.decode('utf-8').strip())
 
         # Return an object of command header and command data
-        return {'header': command_header, 'data': client_socket.recv(command_length)}
+        return {'header': command_header, 'meta': meta, 'data': client_socket.recv(command_length)}
 
     except:
         # client closed connection, violently or by user
@@ -54,8 +56,7 @@ def receive_command(client_socket):
 # Sends file directory to client
 def send_file_directory(client_socket):
     try:
-        list_of_dir = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{WATCH_FOLDER_NAME}/")
-        list_of_dir = '\n'.join(list_of_dir).encode('utf-8')
+        list_of_dir = json.dumps(JSON_CLIENT_FILES).encode('utf-8')
         list_of_dir_header = f"{len(list_of_dir):<{HEADER_LENGTH}}".encode('utf-8')
         meta = f"{'':<{META_LENGTH}}".encode('utf-8')
         client_socket.send(list_of_dir_header + meta + list_of_dir)
@@ -64,47 +65,14 @@ def send_file_directory(client_socket):
         # client closed connection, violently or by user
         return False
 
-# Sends file to the client
-def send_files(client_socket, files):
-    try:
-        fds = [open(f"{os.path.dirname(os.path.abspath(__file__))}/{WATCH_FOLDER_NAME}/{files[i]}",'r') for i in range(len(files))]
-        
-        for i in range(len(files)):
-            # using md5 checksum
-            m = hashlib.md5()
-            
-            while True:
+# Updates file directory
+def update_file_directory(client_id, dir_list):
+    JSON_CLIENT_FILES[client_id] = dir_list.split('\n')
 
-                # read line
-                line = fds[i].readline()
-
-                if not line:
-                    line = m.hexdigest().encode('utf-8')
-                    line_header = f"{len(line):<{HEADER_LENGTH}}".encode('utf-8')
-                    meta = f"{f'END {i}':<{META_LENGTH}}".encode('utf-8')
-                    client_socket.send(line_header + meta + line)
-
-                    log_this(f"{files[i]} was sent to {clients[client_socket]['data']}")
-                    break
-                
-                line = line.encode('utf-8')
-
-                # update md5 checksum
-                m.update(line)
-
-                line_header = f"{len(line):<{HEADER_LENGTH}}".encode('utf-8')
-                meta = f"{f'{i}':<{META_LENGTH}}".encode('utf-8')
-                client_socket.send(line_header + meta + line)
-
-            fds[i].close()
-
-    except Exception as e:
-        # client closed connection, violently or by user
-        error = str(e).encode('utf-8')
-        header = f"{len(error):<{HEADER_LENGTH}}".encode('utf-8')
-        meta = f"{'ERROR':<{META_LENGTH}}".encode('utf-8')
-        client_socket.send(header + meta + error)
-        return False
+    # clear file and rewrite
+    CLIENT_FILES.truncate(0)
+    CLIENT_FILES.write(json.dumps(JSON_CLIENT_FILES))
+    CLIENT_FILES.flush()
 
 if __name__ == "__main__":
     # Create list of server sockets
@@ -123,7 +91,8 @@ if __name__ == "__main__":
     # List of connected clients - socket as a key, user header and name as data
     clients = {}
 
-    log_this(f'Listening for connections on {IP}:{PORT}...')
+    for port in THREAD_PORTS:
+        log_this(f'Listening for connections on {IP}:{port}...')
 
     # Does Server Things
     while True:
@@ -183,9 +152,8 @@ if __name__ == "__main__":
                 # Handle commands
                 if command_msg[0] == 'get_files_list':
                     start_new_thread(send_file_directory, (notified_socket,))
-
-                elif command_msg[0] == 'download':
-                    start_new_thread(send_files, (notified_socket,command_msg[1:],))
+                elif command_msg[0] == 'update_list':
+                    start_new_thread(update_file_directory, (int(command['meta']),command_msg[1]))
 
         # handle some socket exceptions just in case
         for notified_socket in exception_sockets:
