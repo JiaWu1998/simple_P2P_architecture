@@ -15,14 +15,15 @@ from _thread import *
 # get configurations 
 config = json.load(open(f"{os.path.dirname(os.path.abspath(__file__))}/config.json"))
 
+CLIENT_ID = int(os.path.basename(Path(os.path.realpath(__file__)).parent).split('_')[1])
 IP = config['client']['ip_address']
+PORT = config['server']['ports'][CLIENT_ID]
 HEADER_LENGTH = config['header_length']
 META_LENGTH = config['meta_length']
-THREAD_PORTS = config['client']['ports']
+THREAD_PORTS = [i+((len(config['client']['ports'])+1)*CLIENT_ID) for i in config['client']['ports']]
 LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['client']['log_file']}", "a")
 DOWNLOAD_FOLDER_NAME = config['client']['download_folder_name']
 REDOWNLOAD_TIME = config['redownload_times']
-CLIENT_ID = int(os.path.basename(Path(os.path.realpath(__file__)).parent).split('_')[1])
 
 # Logs messages
 def log_this(msg):
@@ -39,6 +40,108 @@ def help():
     print("help - prints verbose for functions\n")
     print("quit - exits client interface\n")
 
+# send updated directory to server
+def update_server():
+    try:
+        list_of_dir = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
+        list_of_dir = '\n'.join(list_of_dir)
+        list_of_dir = f"update_list {list_of_dir}".encode('utf-8')
+        list_of_dir_header = f"{len(list_of_dir):<{HEADER_LENGTH}}".encode('utf-8')
+        meta = f"{f'{CLIENT_ID}':<{META_LENGTH}}".encode('utf-8')
+        central_socket.send(list_of_dir_header + meta + list_of_dir)
+
+    except:
+        # client closed connection, violently or by user
+        return False
+
+# daemon that updates the directory to the server whenever a new file is added or an file is deleted
+def folder_watch_daemon(current_file_directory):
+    while True:
+        temp = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
+        if current_file_directory != temp:
+            update_server()
+            current_file_directory = temp
+
+# Waiting for a list of directories from the server
+def wait_for_list(full_command):
+    # Encode command to bytes, prepare header and convert to bytes, like for username above, then send
+    full_command = full_command.encode('utf-8')
+    command_header = f"{len(full_command):<{HEADER_LENGTH}}".encode('utf-8')
+    meta = f"{'':<{META_LENGTH}}".encode('utf-8')
+    central_socket.send(command_header + meta + full_command)
+
+    log_this(f"Client sent command: {full_command}")
+
+    # Keep trying to recieve until client recieved returns from the server
+    while True:
+        try:
+            # Receive our "header" containing username length, it's size is defined and constant
+            header = central_socket.recv(HEADER_LENGTH)
+
+            # If we received no data, server gracefully closed a connection, for example using socket.close() or socket.shutdown(socket.SHUT_RDWR)
+            if not len(header):
+                log_this(f"Connection closed by the server")
+                return
+
+            # Convert header to int value
+            header = int(header.decode('utf-8').strip())
+
+            # Get meta data
+            meta = central_socket.recv(META_LENGTH)
+            meta = meta.decode('utf-8').strip()
+
+            # Receive and decode msg
+            dir_list = central_socket.recv(header).decode('utf-8')
+            dir_list = json.loads(dir_list)
+
+            # Print List
+            for client in dir_list:
+                print(f"Client {client}:")
+                for file in dir_list[client]:
+                    print(f"\t{file}")
+
+            # Break out of the loop when list is recieved                
+            break
+
+        except IOError as e:
+
+            if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+                log_this('Reading error: {}'.format(str(e)))
+                return
+
+            # We just did not receive anything
+            continue
+
+        except Exception as e:
+            # Any other exception - something happened, exit
+            log_this('Reading error: '.format(str(e)))
+            return
+
+# Handles command receiving
+def receive_command(client_socket):
+
+    try:
+
+        # Receive our "header" containing command length, it's size is defined and constant
+        command_header = client_socket.recv(HEADER_LENGTH)
+
+        # If we received no data, client gracefully closed a connection, for example using socket.close() or socket.shutdown(socket.SHUT_RDWR)
+        if not len(command_header):
+            return False
+
+        # Get meta data
+        meta = client_socket.recv(META_LENGTH)
+        meta = meta.decode('utf-8').strip()
+
+        # Convert header to int value
+        command_length = int(command_header.decode('utf-8').strip())
+
+        # Return an object of command header and command data
+        return {'header': command_header, 'meta': meta, 'data': client_socket.recv(command_length)}
+
+    except:
+        # client closed connection, violently or by user
+        return False
 # waiting function for parallelized/serial file download
 def parallelize_wait_for_file_download(client_socket, files):
 
@@ -171,101 +274,153 @@ def wait_for_file_download(full_command, files):
     # results_file.write(f"{parent_dir},{(end-start)*1000} ms\n")
     results_file.write(f"{(end-start)*1000}\n")
 
-# send updated directory to server
-def update_server():
+# Sends file to the peer
+def send_files(peer_socket, peers, files):
     try:
-        list_of_dir = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
-        list_of_dir = '\n'.join(list_of_dir)
-        list_of_dir = f"update_list {list_of_dir}".encode('utf-8')
-        list_of_dir_header = f"{len(list_of_dir):<{HEADER_LENGTH}}".encode('utf-8')
-        meta = f"{f'{CLIENT_ID}':<{META_LENGTH}}".encode('utf-8')
-        client_sockets[0].send(list_of_dir_header + meta + list_of_dir)
+        fds = [open(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/{files[i]}",'r') for i in range(len(files))]
+        
+        for i in range(len(files)):
+            # using md5 checksum
+            m = hashlib.md5()
+            
+            while True:
 
-    except:
+                # read line
+                line = fds[i].readline()
+
+                if not line:
+                    line = m.hexdigest().encode('utf-8')
+                    line_header = f"{len(line):<{HEADER_LENGTH}}".encode('utf-8')
+                    meta = f"{f'END {i}':<{META_LENGTH}}".encode('utf-8')
+                    peer_socket.send(line_header + meta + line)
+
+                    log_this(f"{files[i]} was sent to {peers[peer_socket]['data']}")
+                    break
+                
+                line = line.encode('utf-8')
+
+                # update md5 checksum
+                m.update(line)
+
+                line_header = f"{len(line):<{HEADER_LENGTH}}".encode('utf-8')
+                meta = f"{f'{i}':<{META_LENGTH}}".encode('utf-8')
+                peer_socket.send(line_header + meta + line)
+
+            fds[i].close()
+
+    except Exception as e:
         # client closed connection, violently or by user
+        error = str(e).encode('utf-8')
+        header = f"{len(error):<{HEADER_LENGTH}}".encode('utf-8')
+        meta = f"{'ERROR':<{META_LENGTH}}".encode('utf-8')
+        peer_socket.send(header + meta + error)
         return False
 
-# daemon that updates the directory to the server whenever a new file is added or an file is deleted
-def folder_watch_daemon(current_file_directory):
-    while True:
-        temp = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
-        if current_file_directory != temp:
-            update_server()
-            current_file_directory = temp
+# A daemon that listens for download requests from any other clients/peers 
+def server_daemon():
+    # Create list of listening server sockets 
+    server_sockets = []
 
-# Waiting for a list of directories from the server
-def wait_for_list(full_command):
-    # Encode command to bytes, prepare header and convert to bytes, like for username above, then send
-    full_command = full_command.encode('utf-8')
-    command_header = f"{len(full_command):<{HEADER_LENGTH}}".encode('utf-8')
-    meta = f"{'':<{META_LENGTH}}".encode('utf-8')
-    client_sockets[0].send(command_header + meta + full_command)
-
-    log_this(f"Client sent command: {full_command}")
-
-    # Keep trying to recieve until client recieved returns from the server
-    while True:
-        try:
-            # Receive our "header" containing username length, it's size is defined and constant
-            header = client_sockets[0].recv(HEADER_LENGTH)
-
-            # If we received no data, server gracefully closed a connection, for example using socket.close() or socket.shutdown(socket.SHUT_RDWR)
-            if not len(header):
-                log_this(f"Connection closed by the server")
-                return
-
-            # Convert header to int value
-            header = int(header.decode('utf-8').strip())
-
-            # Get meta data
-            meta = client_sockets[0].recv(META_LENGTH)
-            meta = meta.decode('utf-8').strip()
-
-            # Receive and decode msg
-            dir_list = client_sockets[0].recv(header).decode('utf-8')
-            dir_list = json.loads(dir_list)
-
-            # Print List
-            for client in dir_list:
-                print(f"Client {client}:")
-                for file in dir_list[client]:
-                    print(f"\t{file}")
-
-            # Break out of the loop when list is recieved                
-            break
-
-        except IOError as e:
-
-            if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
-                log_this('Reading error: {}'.format(str(e)))
-                return
-
-            # We just did not receive anything
-            continue
-
-        except Exception as e:
-            # Any other exception - something happened, exit
-            log_this('Reading error: '.format(str(e)))
-            return
-
-if __name__ == "__main__":
+    for i in range(len(THREAD_PORTS)):
+        temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        temp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        temp.bind((IP, THREAD_PORTS[i]))
+        temp.listen()
+        server_sockets.append(temp)
     
-    if len(sys.argv) == 1:
-        # Create list of sockets connection
-        client_sockets = []
+    # Create list of sockets for select.select()
+    sockets_list = [i for i in server_sockets]
 
+    # List of connected clients - socket as a key, user header and name as data
+    peers = {}
+
+    for port in THREAD_PORTS:
+        log_this(f'Listening for connections on {IP}:{port}...')
+    
+    while True:
+        read_sockets, _, exception_sockets = select.select(sockets_list, [], sockets_list)
+
+        for notified_socket in read_sockets:
+            
+            # If notified socket is a server socket - new connection, accept it
+            if notified_socket in read_sockets:
+
+                client_socket, client_address = server_sockets[server_sockets.index(notified_socket)].accept()
+
+                # Client should send his name right away, receive it
+                user = receive_command(client_socket)
+
+                # If False - client disconnected before he sent his name 
+                if user is False:
+                    continue
+
+                # Add accepted socket to select.select() list
+                sockets_list.append(client_socket)
+                
+                # Also save username and username header
+                peers[client_socket] = user
+
+                #logging
+                log_msg = 'Accepted new connection from {}:{}, username: {}\n'.format(*client_address, user['data'].decode('utf-8'))
+                log_this(log_msg)
+
+            # Else existing socket is sending a command
+            else:
+
+                # Recieve command
+                command = receive_command(notified_socket)
+
+                # If False, client disconnected, cleanup
+                if command is False:
+                    log_msg = '{} Closed connection from: {}\n'.format(datetime.datetime.now(), peers[notified_socket]['data'].decode('utf-8'))
+                    log_this(log_msg)
+
+                    # remove connections
+                    sockets_list.remove(notified_socket)
+                    del peers[notified_socket]
+                    continue
+                
+                # Get user by notified socket, so we will know who sent the command
+                user = peers[notified_socket]
+
+                # Get command
+                command_msg = command["data"].decode("utf-8")
+                command_msg = command_msg.split(' ')
+
+                # logging
+                log_msg = f'{datetime.datetime.now()} Recieved command from {user["data"].decode("utf-8")}: {command_msg[0]}\n'
+                log_this(log_msg)
+
+                # Handle commands
+                if command_msg[0] == 'download':
+                    start_new_thread(send_files, (notified_socket,peers,command_msg[1:],))
+            
+            # handle some socket exceptions just in case
+            for notified_socket in exception_sockets:
+
+                # remove connections
+                sockets_list.remove(notified_socket)
+                del peers[notified_socket]
+                
+if __name__ == "__main__":
+
+    # Start the peer's server daemon
+    start_new_thread(server_daemon,())
+
+    # Manual Mode of Client Interface
+    if len(sys.argv) == 1:
+        
         # create username to connect to the server
         my_username = input("Username: ")
         username = my_username.encode('utf-8')
         username_header = f"{len(username):<{HEADER_LENGTH}}".encode('utf-8')
         meta = f"{'':<{META_LENGTH}}".encode('utf-8')
 
-        # Initialize conneciton with the server
-        temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        temp.connect((IP, THREAD_PORTS[CLIENT_ID]))
-        temp.setblocking(False)
-        temp.send(username_header + meta + username)
-        client_sockets.append(temp)
+        # Initialize connection with the server with central socket
+        central_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        central_socket.connect((IP, PORT))
+        central_socket.setblocking(False)
+        central_socket.send(username_header + meta + username)
 
         # Initialize file directory to server
         update_server()
@@ -278,7 +433,6 @@ if __name__ == "__main__":
         
         # Print verbose client shell begins
         help()
-        
 
         # Does Client Things
         while True:
@@ -306,12 +460,13 @@ if __name__ == "__main__":
             
             elif command == "quit":
                 sys.exit()
-    else:
-        #Args
-        #python client.py username command1 command2 ... commandn
+    
+    # Automatic Mode of Client Interface
+    
+    #Args
+    #python client.py username command1 command2 ... commandn
 
-        # Create list of sockets connection
-        client_sockets = []
+    else:
 
         # create username to connect to the server
         my_username = sys.argv[0]
@@ -319,15 +474,20 @@ if __name__ == "__main__":
         username_header = f"{len(username):<{HEADER_LENGTH}}".encode('utf-8')
         meta = f"{'':<{META_LENGTH}}".encode('utf-8')
 
-        # Initialize conneciton with the server
-        temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        temp.connect((IP, THREAD_PORTS[CLIENT_ID]))
-        temp.setblocking(False)
-        temp.send(username_header + meta + username)
-        client_sockets.append(temp)
+        # Initialize connection with the server with central socket
+        central_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        central_socket.connect((IP, PORT))
+        central_socket.setblocking(False)
+        central_socket.send(username_header + meta + username)
 
         # Initialize file directory to server
         update_server()
+
+        # get current file directories
+        current_file_directory = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
+
+        # Start folder watch daemon to automatically update to server
+        start_new_thread(folder_watch_daemon,(current_file_directory,))
 
         # Does Client Things
         for i in sys.argv[1:]:
@@ -354,3 +514,12 @@ if __name__ == "__main__":
             
             elif command == "quit":
                 sys.exit()
+
+
+
+
+
+
+
+############TODO###############################################################
+# stopped at client download/recieve option
