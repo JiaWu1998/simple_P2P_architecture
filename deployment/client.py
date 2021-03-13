@@ -10,6 +10,7 @@ import sys
 import hashlib
 import datetime
 from pathlib import Path
+from _thread import *
 
 # get configurations 
 config = json.load(open(f"{os.path.dirname(os.path.abspath(__file__))}/config.json"))
@@ -170,7 +171,6 @@ def wait_for_file_download(full_command, files):
     # results_file.write(f"{parent_dir},{(end-start)*1000} ms\n")
     results_file.write(f"{(end-start)*1000}\n")
 
-
 # send updated directory to server
 def update_server():
     try:
@@ -184,6 +184,14 @@ def update_server():
     except:
         # client closed connection, violently or by user
         return False
+
+# daemon that updates the directory to the server whenever a new file is added or an file is deleted
+def folder_watch_daemon(current_file_directory):
+    while True:
+        temp = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
+        if current_file_directory != temp:
+            update_server()
+            current_file_directory = temp
 
 # Waiting for a list of directories from the server
 def wait_for_list(full_command):
@@ -261,6 +269,12 @@ if __name__ == "__main__":
 
         # Initialize file directory to server
         update_server()
+
+        # get current file directories
+        current_file_directory = os.listdir(f"{os.path.dirname(os.path.abspath(__file__))}/{DOWNLOAD_FOLDER_NAME}/")
+
+        # Start folder watch daemon to automatically update to server
+        start_new_thread(folder_watch_daemon,(current_file_directory,))
         
         # Print verbose client shell begins
         help()
