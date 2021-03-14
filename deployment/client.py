@@ -20,7 +20,7 @@ IP = config['client']['ip_address']
 PORT = config['server']['ports'][CLIENT_ID]
 HEADER_LENGTH = config['header_length']
 META_LENGTH = config['meta_length']
-THREAD_PORTS = [i+((len(config['client']['ports'])+1)*CLIENT_ID) for i in config['client']['ports']]
+THREAD_PORTS = config['client']['ports']
 LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['client']['log_file']}", "a")
 DOWNLOAD_FOLDER_NAME = config['client']['download_folder_name']
 REDOWNLOAD_TIME = config['redownload_times']
@@ -142,6 +142,7 @@ def receive_command(client_socket):
     except:
         # client closed connection, violently or by user
         return False
+
 # waiting function for parallelized/serial file download
 def parallelize_wait_for_file_download(client_socket, files):
 
@@ -235,24 +236,46 @@ def parallelize_wait_for_file_download(client_socket, files):
             return
 
 # Waiting for the file contents from the server
-def wait_for_file_download(full_command, files):
+def wait_for_file_download(full_command):
     parallelize = False
 
+    parameters = full_command.split(' ')[1:]
+    target_client = parameters[0]
+    files = parameters[1:]
+
+    # check for parallelism option
     if parameters[0] == '-p':
-        if len(parameters) == 1:
+        if len(parameters) <= 2:
             log_this("ParameterError: Too less parameters")
             return
         else:
             parallelize = True
-            files = files[1:]
+            target_client = parameters[1]
+            files = files[2:]
 
     start = time.time()
 
+    # Compute ports that 'this' peer will try to connect
+    client_thread_ports = [i+((len(config['client']['ports'])+1)*target_client) for i in THREAD_PORTS]
+
+    # initialize connections with the other peer
+    client_sockets = []
+
+    for i in range(len(client_thread_ports)):
+        temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        temp.connect((IP, client_thread_ports[i]))
+        temp.setblocking(False)
+
+        # Initialize conneciton with the server
+        temp.send(username_header + meta + username)
+        client_sockets.append(temp)
+
+    # starts waiting for file download
     if parallelize:       
-        for i in range(0, len(files), len(THREAD_PORTS)):
+        for i in range(0, len(files), len(client_thread_ports)):
             thread_idx = 0
             threads = []
-            for j in range(i,i+ len(THREAD_PORTS)):
+            for j in range(i,i+ len(client_thread_ports)):
                 if j < len(files):
                     t = Thread(target=parallelize_wait_for_file_download, args=(client_sockets[thread_idx], [files[j]],))
                     t.start()
@@ -318,13 +341,17 @@ def send_files(peer_socket, peers, files):
 
 # A daemon that listens for download requests from any other clients/peers 
 def server_daemon():
+    
     # Create list of listening server sockets 
     server_sockets = []
 
-    for i in range(len(THREAD_PORTS)):
+    # Compute ports that 'this' peer will listen to as a server
+    server_thread_ports = [i+((len(config['client']['ports'])+1)*CLIENT_ID) for i in THREAD_PORTS]
+
+    for i in range(len(server_thread_ports)):
         temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         temp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        temp.bind((IP, THREAD_PORTS[i]))
+        temp.bind((IP, server_thread_ports[i]))
         temp.listen()
         server_sockets.append(temp)
     
@@ -444,7 +471,7 @@ if __name__ == "__main__":
 
             if command == "download":
                 if len(parameters) != 0:
-                    wait_for_file_download(full_command, parameters)
+                    wait_for_file_download(full_command)
                 else:
                     
                     log_this("ParameterError: Too less parameters")
@@ -499,7 +526,7 @@ if __name__ == "__main__":
 
             if command == "download":
                 if len(parameters) != 0:
-                    wait_for_file_download(full_command, parameters)
+                    wait_for_file_download(full_command)
                 else:
                     log_this("ParameterError: Too less parameters")
 
@@ -514,12 +541,3 @@ if __name__ == "__main__":
             
             elif command == "quit":
                 sys.exit()
-
-
-
-
-
-
-
-############TODO###############################################################
-# stopped at client download/recieve option
