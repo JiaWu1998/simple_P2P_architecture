@@ -16,8 +16,8 @@ META_LENGTH = config['meta_length']
 THREAD_PORTS = config['server']['ports']
 WATCH_FOLDER_NAME = config['server']['watch_folder_name']
 CLIENT_FILES_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/{WATCH_FOLDER_NAME}/client_files.json"
-CLIENT_FILES = open(CLIENT_FILES_DIR, "a")
-JSON_CLIENT_FILES = json.loads(CLIENT_FILES) if os.stat(CLIENT_FILES_DIR).st_size != 0 else json.loads(json.dumps({}))
+CLIENT_FILES = open(CLIENT_FILES_DIR, "w+")
+JSON_CLIENT_FILES = json.load(CLIENT_FILES) if os.stat(CLIENT_FILES_DIR).st_size != 0 else json.loads(json.dumps({}))
 LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['server']['log_file']}", "a")
 
 
@@ -71,7 +71,7 @@ def update_file_directory(client_id, dir_list):
 
     # clear file and rewrite
     CLIENT_FILES.truncate(0)
-    CLIENT_FILES.write(json.dumps(JSON_CLIENT_FILES))
+    CLIENT_FILES.write(f"{json.dumps(JSON_CLIENT_FILES)}")
     CLIENT_FILES.flush()
 
 if __name__ == "__main__":

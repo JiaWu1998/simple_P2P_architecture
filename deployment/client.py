@@ -27,8 +27,8 @@ REDOWNLOAD_TIME = config['redownload_times']
 
 # Logs messages
 def log_this(msg):
-    print(msg)
-    LOG.write(f"{datetime.datetime.now()} {msg}")
+    # print(msg)
+    LOG.write(f"{datetime.datetime.now()} {msg}\n")
     LOG.flush()
 
 # Verbose function
@@ -240,7 +240,7 @@ def wait_for_file_download(full_command):
     parallelize = False
 
     parameters = full_command.split(' ')[1:]
-    target_client = parameters[0]
+    target_client = int(parameters[0])
     files = parameters[1:]
 
     # check for parallelism option
@@ -250,8 +250,12 @@ def wait_for_file_download(full_command):
             return
         else:
             parallelize = True
-            target_client = parameters[1]
+            target_client = int(parameters[1])
             files = files[2:]
+
+    # if the target client is itself, don't do anything
+    if target_client == CLIENT_ID:
+        return
 
     start = time.time()
 
@@ -361,7 +365,7 @@ def server_daemon():
     # List of connected clients - socket as a key, user header and name as data
     peers = {}
 
-    for port in THREAD_PORTS:
+    for port in server_thread_ports:
         log_this(f'Listening for connections on {IP}:{port}...')
     
     while True:
@@ -370,8 +374,8 @@ def server_daemon():
         for notified_socket in read_sockets:
             
             # If notified socket is a server socket - new connection, accept it
-            if notified_socket in read_sockets:
-
+            if notified_socket in server_sockets:
+                
                 client_socket, client_address = server_sockets[server_sockets.index(notified_socket)].accept()
 
                 # Client should send his name right away, receive it
@@ -424,7 +428,7 @@ def server_daemon():
             
             # handle some socket exceptions just in case
             for notified_socket in exception_sockets:
-
+                
                 # remove connections
                 sockets_list.remove(notified_socket)
                 del peers[notified_socket]
