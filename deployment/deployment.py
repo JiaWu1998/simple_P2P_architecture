@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import sys
 
 # Test File Load Sizes
-# TEST_LOAD_SIZES = [128,512,2000,8000,32000]
+TEST_LOAD_SIZES = [128,512,2000,8000,32000]
 
 # Get parent directory
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,19 +41,39 @@ def delete_clients(N):
     for i in range(N):
         shutil.rmtree(f"{PARENT_DIR}/../client_{i}")
 
-# Create test loads in server
-# def create_test_loads():
-#     for size in TEST_LOAD_SIZES:
-#         f = open(f"{PARENT_DIR}/../server/watch_folder/load_{size}","w")
-#         for i in range(size):
-#             if i % 10000 == 0:
-#                 f.write('\n')
-#             else:
-#                 f.write("b")
-#         f.close()
+# Create test loads for client_idx
+def create_test_loads(idx):
+    for size in TEST_LOAD_SIZES:
+        f = open(f"{PARENT_DIR}/../client_{idx}/download_folder/load_{size}","w")
+        for i in range(size):
+            if i % 10000 == 0:
+                f.write('\n')
+            else:
+                f.write("b")
+        f.close()
 
 # Evaluation 1:
 def evaluation_1():
+    N = 3
+
+    create_server()
+    create_clients(N)
+    create_test_loads(0)
+
+    # start server and client and check
+    server_process = Popen(['python','server.py'], stdout=PIPE, stdin=PIPE, stderr=PIPE, cwd=f"{PARENT_DIR}/../server")    
+
+    client_process_1 = Popen(['python','client.py','Mr.0',f"download 1 load_{TEST_LOAD_SIZES[-1]}", "quit"], stdout=PIPE, stdin=PIPE, stderr=PIPE, cwd=f"{PARENT_DIR}/../client_0")
+    client_process_2 = Popen(['python','client.py','Mr.1',f"download 2 load_{TEST_LOAD_SIZES[-1]}", "quit"], stdout=PIPE, stdin=PIPE, stderr=PIPE, cwd=f"{PARENT_DIR}/../client_1")
+    client_process_3 = Popen(['python','client.py','Mr.2',f"download 0 load_{TEST_LOAD_SIZES[-1]}", "quit"], stdout=PIPE, stdin=PIPE, stderr=PIPE, cwd=f"{PARENT_DIR}/../client_2")
+
+    client_process_1.wait()
+    client_process_2.wait()
+    client_process_3.wait()
+    server_process.kill()
+
+    delete_clients(N)
+    delete_server()
     pass
 
 # Evaluation 2:
@@ -64,10 +84,6 @@ def evaluation_2():
 def evaluation_3():
     pass
 
-# Evaluation 4:
-def evaluation_4():
-    pass
-
 if __name__ == "__main__":
     if sys.argv[1] == "-1":
         evaluation_1()
@@ -75,8 +91,6 @@ if __name__ == "__main__":
         evaluation_2()
     elif sys.argv[1] == "-3":
         evaluation_3()
-    elif sys.argv[1] == "-4":
-        evaluation_4()
     elif sys.argv[1] == "-c" and len(sys.argv) == 3:
         try: 
             N = int(sys.argv[2])

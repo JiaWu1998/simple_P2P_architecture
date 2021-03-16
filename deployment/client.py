@@ -21,15 +21,16 @@ PORT = config['server']['ports'][CLIENT_ID]
 HEADER_LENGTH = config['header_length']
 META_LENGTH = config['meta_length']
 THREAD_PORTS = config['client']['ports']
-LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['client']['log_file']}", "a")
 DOWNLOAD_FOLDER_NAME = config['client']['download_folder_name']
 REDOWNLOAD_TIME = config['redownload_times']
+LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['client']['log_file']}", "a")
 
 # Logs messages
 def log_this(msg):
     # print(msg)
     LOG.write(f"{datetime.datetime.now()} {msg}\n")
     LOG.flush()
+
 
 # Verbose function
 def help():
@@ -260,6 +261,7 @@ def wait_for_file_download(full_command):
 
     # if the target client is itself, don't do anything
     if target_client == CLIENT_ID:
+        log_this("WrongClient: Target Client is Current Client.")
         return
 
     start = time.time()
@@ -297,6 +299,8 @@ def wait_for_file_download(full_command):
     else:
         t = Thread(target=parallelize_wait_for_file_download, args=(client_sockets[0], files,))
         t.start()
+
+    log_this(f"DownloadComplete: {' '.join(files)}")
 
     end = time.time()
     # print(f"Time: {end - start}")
@@ -352,7 +356,6 @@ def send_files(peer_socket, peers, files):
 
 # A daemon that listens for download requests from any other clients/peers 
 def server_daemon():
-    
     # Create list of listening server sockets 
     server_sockets = []
 
@@ -365,7 +368,7 @@ def server_daemon():
         temp.bind((IP, server_thread_ports[i]))
         temp.listen()
         server_sockets.append(temp)
-    
+
     # Create list of sockets for select.select()
     sockets_list = [i for i in server_sockets]
 
@@ -399,7 +402,7 @@ def server_daemon():
                 peers[client_socket] = user
 
                 #logging
-                log_msg = 'Accepted new connection from {}:{}, username: {}\n'.format(*client_address, user['data'].decode('utf-8'))
+                log_msg = 'Accepted new connection from {}:{}, username: {}'.format(*client_address, user['data'].decode('utf-8'))
                 log_this(log_msg)
 
             # Else existing socket is sending a command
@@ -410,7 +413,7 @@ def server_daemon():
 
                 # If False, client disconnected, cleanup
                 if command is False:
-                    log_msg = '{} Closed connection from: {}\n'.format(datetime.datetime.now(), peers[notified_socket]['data'].decode('utf-8'))
+                    log_msg = '{} Closed connection from: {}'.format(datetime.datetime.now(), peers[notified_socket]['data'].decode('utf-8'))
                     log_this(log_msg)
 
                     # remove connections
@@ -445,6 +448,9 @@ if __name__ == "__main__":
     # Start the peer's server daemon
     start_new_thread(server_daemon,())
 
+    # allow time for the server daemon to start up
+    time.sleep(3)
+    
     # Manual Mode of Client Interface
     if len(sys.argv) == 1:
         
@@ -503,7 +509,7 @@ if __name__ == "__main__":
                 central_socket.send(command_header + meta + full_command)
 
                 log_this(f"Client sent command: {full_command}")
-
+                LOG.close()
                 sys.exit()
     
     # Automatic Mode of Client Interface
@@ -514,7 +520,7 @@ if __name__ == "__main__":
     else:
 
         # create username to connect to the server
-        my_username = sys.argv[0]
+        my_username = sys.argv[1]
         username = my_username.encode('utf-8')
         username_header = f"{len(username):<{HEADER_LENGTH}}".encode('utf-8')
         meta = f"{'':<{META_LENGTH}}".encode('utf-8')
@@ -535,7 +541,7 @@ if __name__ == "__main__":
         start_new_thread(folder_watch_daemon,(current_file_directory,))
 
         # Does Client Things
-        for i in sys.argv[1:]:
+        for i in sys.argv[2:]:
 
             # Wait for user to input a command
             full_command = i
@@ -558,4 +564,12 @@ if __name__ == "__main__":
                 help()
             
             elif command == "quit":
+                # Encode command to bytes, prepare header and convert to bytes, like for username above, then send
+                full_command = f"unregister".encode('utf-8')
+                command_header = f"{len(full_command):<{HEADER_LENGTH}}".encode('utf-8')
+                meta = f"{f'{CLIENT_ID}':<{META_LENGTH}}".encode('utf-8')
+                central_socket.send(command_header + meta + full_command)
+
+                log_this(f"Client sent command: {full_command}")
+                LOG.close()
                 sys.exit()

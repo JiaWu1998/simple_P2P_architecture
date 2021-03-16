@@ -15,16 +15,16 @@ HEADER_LENGTH = config['header_length']
 META_LENGTH = config['meta_length']
 THREAD_PORTS = config['server']['ports']
 WATCH_FOLDER_NAME = config['server']['watch_folder_name']
+LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['server']['log_file']}", "a")
 CLIENT_FILES_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/{WATCH_FOLDER_NAME}/client_files.json"
 CLIENT_FILES = open(CLIENT_FILES_DIR, "w+")
-JSON_CLIENT_FILES = json.load(CLIENT_FILES) if os.stat(CLIENT_FILES_DIR).st_size != 0 else json.loads(json.dumps({}))
-LOG = open(f"{os.path.dirname(os.path.abspath(__file__))}/{config['server']['log_file']}", "a")
+json_client_files = json.load(CLIENT_FILES) if os.stat(CLIENT_FILES_DIR).st_size != 0 else json.loads(json.dumps({}))
 
 
 # Logs messages
 def log_this(msg):
     print(msg)
-    LOG.write(f"{datetime.datetime.now()} {msg}")
+    LOG.write(f"{datetime.datetime.now()} {msg}\n")
     LOG.flush()
 
 # Handles command receiving
@@ -56,7 +56,7 @@ def receive_command(client_socket):
 # Sends file directory to client
 def send_file_directory(client_socket):
     try:
-        list_of_dir = json.dumps(JSON_CLIENT_FILES).encode('utf-8')
+        list_of_dir = json.dumps(json_client_files).encode('utf-8')
         list_of_dir_header = f"{len(list_of_dir):<{HEADER_LENGTH}}".encode('utf-8')
         meta = f"{'':<{META_LENGTH}}".encode('utf-8')
         client_socket.send(list_of_dir_header + meta + list_of_dir)
@@ -67,24 +67,22 @@ def send_file_directory(client_socket):
 
 # Updates file directory
 def update_file_directory(client_id, dir_list):
-    JSON_CLIENT_FILES[client_id] = dir_list.split('\n')
+    json_client_files[client_id] = dir_list.split('\n')
 
     # clear file and rewrite
     CLIENT_FILES.truncate(0)
-    CLIENT_FILES.write(f"{json.dumps(JSON_CLIENT_FILES)}")
+    CLIENT_FILES.write(f"{json.dumps(json_client_files)}")
     CLIENT_FILES.flush()
-
-    log_this(f"Update directory for client_{client_id}")
+ 
 
 def unregister_client(client_id):
-    del JSON_CLIENT_FILES[client_id]
+    del json_client_files[client_id]
 
     # clear file and rewrite
     CLIENT_FILES.truncate(0)
-    CLIENT_FILES.write(f"{json.dumps(JSON_CLIENT_FILES)}")
+    CLIENT_FILES.write(f"{json.dumps(json_client_files)}")
     CLIENT_FILES.flush()
 
-    log_this(f"Unregister client_{client_id}")
 
 
 if __name__ == "__main__":
@@ -132,7 +130,7 @@ if __name__ == "__main__":
                 clients[client_socket] = user
 
                 # logging 
-                log_msg = 'Accepted new connection from {}:{}, username: {}\n'.format(*client_address, user['data'].decode('utf-8'))
+                log_msg = 'Accepted new connection from {}:{}, username: {}'.format(*client_address, user['data'].decode('utf-8'))
                 log_this(log_msg)
             
             # Else existing socket is sending a command
@@ -143,7 +141,7 @@ if __name__ == "__main__":
 
                 # If False, client disconnected, cleanup
                 if command is False:
-                    log_msg = '{} Closed connection from: {}\n'.format(datetime.datetime.now(), clients[notified_socket]['data'].decode('utf-8'))                 
+                    log_msg = '{} Closed connection from: {}'.format(datetime.datetime.now(), clients[notified_socket]['data'].decode('utf-8'))                 
                     log_this(log_msg)
 
                     # remove connections
@@ -159,16 +157,21 @@ if __name__ == "__main__":
                 command_msg = command_msg.split(' ')
 
                 # logging
-                log_msg = f'{datetime.datetime.now()} Received command from {user["data"].decode("utf-8")}: {command_msg[0]}\n'
+                log_msg = f'{datetime.datetime.now()} Received command from {user["data"].decode("utf-8")}: {command_msg[0]}'
                 log_this(log_msg)
 
                 # Handle commands
                 if command_msg[0] == 'get_files_list':
                     start_new_thread(send_file_directory, (notified_socket,))
+                    log_this(f'Sent file list to {user["data"].decode("utf-8")}')
+
                 elif command_msg[0] == 'update_list':
                     start_new_thread(update_file_directory, (int(command['meta']),command_msg[1],))
+                    log_this(f"Update directory for client_{int(command['meta'])}")
+
                 elif command_msg[0] == 'unregister':
                     start_new_thread(unregister_client, (int(command['meta']),))
+                    log_this(f"Unregister client_{int(command['meta'])}")
 
         # handle some socket exceptions just in case
         for notified_socket in exception_sockets:
