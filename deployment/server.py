@@ -74,6 +74,19 @@ def update_file_directory(client_id, dir_list):
     CLIENT_FILES.write(f"{json.dumps(JSON_CLIENT_FILES)}")
     CLIENT_FILES.flush()
 
+    log_this(f"Update directory for client_{client_id}")
+
+def unregister_client(client_id):
+    del JSON_CLIENT_FILES[client_id]
+
+    # clear file and rewrite
+    CLIENT_FILES.truncate(0)
+    CLIENT_FILES.write(f"{json.dumps(JSON_CLIENT_FILES)}")
+    CLIENT_FILES.flush()
+
+    log_this(f"Unregister client_{client_id}")
+
+
 if __name__ == "__main__":
     # Create list of server sockets
     server_sockets = []
@@ -132,7 +145,7 @@ if __name__ == "__main__":
                 if command is False:
                     log_msg = '{} Closed connection from: {}\n'.format(datetime.datetime.now(), clients[notified_socket]['data'].decode('utf-8'))                 
                     log_this(log_msg)
-                    
+
                     # remove connections
                     sockets_list.remove(notified_socket)
                     del clients[notified_socket]
@@ -153,11 +166,13 @@ if __name__ == "__main__":
                 if command_msg[0] == 'get_files_list':
                     start_new_thread(send_file_directory, (notified_socket,))
                 elif command_msg[0] == 'update_list':
-                    start_new_thread(update_file_directory, (int(command['meta']),command_msg[1]))
+                    start_new_thread(update_file_directory, (int(command['meta']),command_msg[1],))
+                elif command_msg[0] == 'unregister':
+                    start_new_thread(unregister_client, (int(command['meta']),))
 
         # handle some socket exceptions just in case
         for notified_socket in exception_sockets:
-
+            
             # remove connections
             sockets_list.remove(notified_socket)
             del clients[notified_socket]

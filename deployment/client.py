@@ -36,7 +36,7 @@ def help():
     print("\n*** INFO ON FUNCTIONS ***\n")
     print("[function_name] [options] [parameters] - [description]\n")
     print("get_files_list - gets the file names from all the clients\n")
-    print("download -p <file_name> ... <file_name> - downloads one or more files serially or parallely. To download serially, use it without the -p option\n")
+    print("download -p <client_number> <file_name> ... <file_name> - downloads one or more files serially or parallely from the target client. To download serially, use it without the -p option\n")
     print("help - prints verbose for functions\n")
     print("quit - exits client interface\n")
 
@@ -237,11 +237,7 @@ def parallelize_wait_for_file_download(client_socket, files):
 
 # Waiting for the file contents from the server
 def wait_for_file_download(full_command):
-    parallelize = False
-
     parameters = full_command.split(' ')[1:]
-    target_client = int(parameters[0])
-    files = parameters[1:]
 
     # check for parallelism option
     if parameters[0] == '-p':
@@ -251,7 +247,16 @@ def wait_for_file_download(full_command):
         else:
             parallelize = True
             target_client = int(parameters[1])
-            files = files[2:]
+            files = parameters[2:]
+    else:
+        if len(parameters) <= 1:
+            log_this("ParameterError: Too less parameters")
+            return
+        else:
+            parallelize = False
+            target_client = int(parameters[0])
+            files = parameters[1:]
+
 
     # if the target client is itself, don't do anything
     if target_client == CLIENT_ID:
@@ -290,16 +295,18 @@ def wait_for_file_download(full_command):
                 t.join()
 
     else:
-        parallelize_wait_for_file_download(client_sockets[0], files)
+        t = Thread(target=parallelize_wait_for_file_download, args=(client_sockets[0], files,))
+        t.start()
 
     end = time.time()
-    print(f"Time: {end - start}")
+    # print(f"Time: {end - start}")
 
     # For data collection
     parent_dir = os.path.dirname(os.path.abspath(__file__))
     results_file = open(f"{parent_dir}/../results/results.txt", 'a')
     # results_file.write(f"{parent_dir},{(end-start)*1000} ms\n")
     results_file.write(f"{(end-start)*1000}\n")
+    return
 
 # Sends file to the peer
 def send_files(peer_socket, peers, files):
@@ -477,7 +484,6 @@ if __name__ == "__main__":
                 if len(parameters) != 0:
                     wait_for_file_download(full_command)
                 else:
-                    
                     log_this("ParameterError: Too less parameters")
 
             elif command == "get_files_list":
@@ -490,6 +496,14 @@ if __name__ == "__main__":
                 help()
             
             elif command == "quit":
+                # Encode command to bytes, prepare header and convert to bytes, like for username above, then send
+                full_command = f"unregister".encode('utf-8')
+                command_header = f"{len(full_command):<{HEADER_LENGTH}}".encode('utf-8')
+                meta = f"{f'{CLIENT_ID}':<{META_LENGTH}}".encode('utf-8')
+                central_socket.send(command_header + meta + full_command)
+
+                log_this(f"Client sent command: {full_command}")
+
                 sys.exit()
     
     # Automatic Mode of Client Interface
@@ -530,13 +544,13 @@ if __name__ == "__main__":
 
             if command == "download":
                 if len(parameters) != 0:
-                    wait_for_file_download(full_command)
+                    start_new_thread(wait_for_file_download,(full_command,))
                 else:
                     log_this("ParameterError: Too less parameters")
 
             elif command == "get_files_list":
                 if len(parameters) == 0:
-                    wait_for_list(full_command)
+                    start_new_thread(wait_for_list,(full_command,))
                 else:
                     log_this("ParameterError: Too many parameters")
 
