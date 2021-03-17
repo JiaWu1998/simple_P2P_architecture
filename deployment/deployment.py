@@ -97,7 +97,6 @@ def evaluation_1():
 # Evaluation 2:
 def evaluation_2():
     
-
     number_of_requests = 5
     commands = ['get_files_list'] * number_of_requests
 
