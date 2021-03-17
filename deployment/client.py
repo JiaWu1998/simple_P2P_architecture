@@ -72,6 +72,8 @@ def wait_for_list(full_command):
     central_socket.send(command_header + meta + full_command)
 
     log_this(f"Client sent command: {full_command}")
+    
+    start = time.time()
 
     # Keep trying to recieve until client recieved returns from the server
     while True:
@@ -97,10 +99,13 @@ def wait_for_list(full_command):
 
             # Print List
             for client in dir_list:
-                print(f"Client {client}:")
+                print(f"Client with id {client}:")
                 for file in dir_list[client]:
                     print(f"\t{file}")
-
+            
+            end = time.time()
+            
+            log_this(f"FileQueryComplete: {(end-start)*1000} ms.")
             # Break out of the loop when list is recieved                
             break
 
@@ -166,7 +171,7 @@ def parallelize_wait_for_file_download(client_socket, files):
     # Keep trying to recieve until client recieved returns from the server
     while True:
         try:
-
+            start = time.time()
             header = client_socket.recv(HEADER_LENGTH)  
 
             # If we received no data, server gracefully closed a connection, for example using socket.close() or socket.shutdown(socket.SHUT_RDWR)
@@ -215,6 +220,8 @@ def parallelize_wait_for_file_download(client_socket, files):
             
             # when all files are closed/downloaded sucessfully then we can break from the loop
             if files_closed == len(fds):
+                end = time.time()
+                log_this(f"DownloadComplete: {(end-start)*1000} ms. Downloaded Files are {' '.join(files)}")
                 break
 
         except IOError as e:
@@ -238,6 +245,7 @@ def parallelize_wait_for_file_download(client_socket, files):
 
 # Waiting for the file contents from the server
 def wait_for_file_download(full_command):
+
     parameters = full_command.split(' ')[1:]
 
     # check for parallelism option
@@ -263,8 +271,6 @@ def wait_for_file_download(full_command):
     if target_client == CLIENT_ID:
         log_this("WrongClient: Target Client is Current Client.")
         return
-
-    start = time.time()
 
     # Compute ports that 'this' peer will try to connect
     client_thread_ports = [i+((len(config['client']['ports'])+1)*target_client) for i in THREAD_PORTS]
@@ -295,21 +301,14 @@ def wait_for_file_download(full_command):
             
             for t in threads:
                 t.join()
-
     else:
+        # start = time.time()
         t = Thread(target=parallelize_wait_for_file_download, args=(client_sockets[0], files,))
         t.start()
 
-    log_this(f"DownloadComplete: {' '.join(files)}")
+        # end = time.time()
+        # log_this(f"DownloadComplete: {(end-start)*1000} ms. Downloaded Files are {' '.join(files)}")
 
-    end = time.time()
-    # print(f"Time: {end - start}")
-
-    # For data collection
-    parent_dir = os.path.dirname(os.path.abspath(__file__))
-    results_file = open(f"{parent_dir}/../results/results.txt", 'a')
-    # results_file.write(f"{parent_dir},{(end-start)*1000} ms\n")
-    results_file.write(f"{(end-start)*1000}\n")
     return
 
 # Sends file to the peer
@@ -539,9 +538,12 @@ if __name__ == "__main__":
 
         # Start folder watch daemon to automatically update to server
         start_new_thread(folder_watch_daemon,(current_file_directory,))
-
+        
         # Does Client Things
         for i in sys.argv[2:]:
+
+            # give time to process command
+            time.sleep(1)
 
             # Wait for user to input a command
             full_command = i
@@ -550,13 +552,13 @@ if __name__ == "__main__":
 
             if command == "download":
                 if len(parameters) != 0:
-                    start_new_thread(wait_for_file_download,(full_command,))
+                    wait_for_file_download(full_command)
                 else:
                     log_this("ParameterError: Too less parameters")
 
             elif command == "get_files_list":
                 if len(parameters) == 0:
-                    start_new_thread(wait_for_list,(full_command,))
+                    wait_for_list(full_command)
                 else:
                     log_this("ParameterError: Too many parameters")
 
@@ -573,3 +575,5 @@ if __name__ == "__main__":
                 log_this(f"Client sent command: {full_command}")
                 LOG.close()
                 sys.exit()
+
+            
